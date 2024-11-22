@@ -1,0 +1,175 @@
+name: Go Build and Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+
+    - name: Set up Go
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+      with:
+        go-version-file: "go.mod"
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@9d1e0624a798bb64f6c3cea93db47765312263dc # v5.1.0
+      with:
+        # Optional: version of golangci-lint to use in form of v1.2 or v1.2.3 or `latest` to use the latest version
+        version: v1.58.1
+        # only-new-issues is only applicable to PRs, otherwise it is always set to false
+        only-new-issues: true
+        args: --out-format colored-line-number,checkstyle:golangci-lint-report.xml
+
+    - name: Print golangci lint report
+      if: always()
+      run: test -f golangci-lint-report.xml && cat golangci-lint-report.xml || true
+
+    - name: Upload golangci lint report artifact
+      if: always()
+      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      with:
+        name: golangci-lint-report
+        path: golangci-lint-report.xml
+
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+
+    - name: Set up Go
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+      with:
+        go-version-file: "go.mod"
+
+    - name: Run Unit Tests
+      run: go test ./... -coverpkg=./... -coverprofile=coverage.txt
+    
+    - name: Upload Go test results
+      if: always()
+      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      with:
+        name: go-test-results
+        path: ./coverage.txt
+
+    - name: Quality Gate - V3 test coverage above threshold
+      env:
+        TESTCOVERAGE_THRESHOLD: 70
+      run: |
+          go test github.com/goplugin/plugin-automation/pkg/v3/... -coverprofile coverV3.out -covermode count
+          echo "Quality Gate: checking V3 test coverage is above threshold ..."
+          echo "Threshold              : $TESTCOVERAGE_THRESHOLD %"
+          totalCoverage=`go tool cover -func=coverV3.out | grep total | grep -Eo '[0-9]+\.[0-9]+'`
+          echo "Current test coverage  : $totalCoverage %"
+          if (( $(echo "$totalCoverage $TESTCOVERAGE_THRESHOLD" | awk '{print ($1 > $2)}') )); then
+            echo "V3 test coverage OK"
+          else
+            echo "Current test coverage is below threshold. Please add more unit tests or adjust threshold to a lower value."
+            echo "Failed"
+            exit 1
+          fi
+
+  simulation:
+    strategy:
+      fail-fast: false
+      matrix:
+        plan: ["simplan_fast_check", "only_log_trigger"]
+
+    name: Upkeep Simulation ${{ matrix.plan }}
+
+    runs-on: ubuntu-latest
+    # runs-on: ubuntu20.04-64cores-256GB <-- run on specific machine with more resources
+    steps:
+    - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+
+    - name: Set up go
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+      with:
+        go-version-file: "go.mod"
+    
+    - name: Run Simulation Plan
+      run: make simulator && ./bin/simulator --simulate --verbose -f ./tools/simulator/plans/${{ matrix.plan }}.json -o ./${{ matrix.plan }}
+    
+    - name: Archive Simulation Output
+      run: tar -czvf ${{ matrix.plan }}.tar.gz ./${{ matrix.plan }}
+    
+    - name: Store Simulation Artifacts
+      if: always()
+      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      with:
+        name: ${{ matrix.plan }}_logs
+        path: |
+          ./${{ matrix.plan }}.tar.gz
+
+  race-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+
+    - name: Set up Go
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+      with:
+        go-version-file: "go.mod"
+
+    - name: Run Race Tests
+      run: go test -race ./... -coverpkg=./... -coverprofile=race_coverage.txt
+    
+    - name: Upload Go race test results
+      if: always()
+      uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+      with:
+        name: go-race-test-results
+        path: ./race_coverage.txt
+
+  fuzz-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+
+    - name: Set up Go
+      uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+      with:
+        go-version-file: "go.mod"
+
+    - name: Run Keepers Package v2 Fuzz Tests
+      run: go test --fuzz=Fuzz --fuzztime=10s -run=^# github.com/goplugin/plugin-automation/pkg/v2
+
+    - name: Run Keepers Package v3 Fuzz Tests
+      run: go test --fuzz=Fuzz --fuzztime=10s -run=^# github.com/goplugin/plugin-automation/pkg/v3
+
+  sonar-scan:
+    name: SonarQube
+    needs: [lint, unit-test, race-test, simulation]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout the repo
+        uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.1.4
+        with:
+          fetch-depth: 0 # fetches all history for all tags and branches to provide more metadata for sonar reports
+
+      - name: Download all workflow run artifacts
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+      
+      - name: Set SonarQube Report Paths
+        id: sonarqube_report_paths
+        shell: bash
+        run: |
+          echo "sonarqube_coverage_report_paths=$(find -type f -name '*coverage.txt' -printf "%p,")" >> $GITHUB_OUTPUT
+          echo "sonarqube_golangci_report_paths=$(find -type f -name 'golangci-lint-report.xml' -printf "%p,")" >> $GITHUB_OUTPUT
+      
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@53c3e3207fe4b8d52e2f1ac9d6eb1d2506f626c0 # v2.0.2
+        with:
+          args: >
+            -Dsonar.go.coverage.reportPaths=${{ steps.sonarqube_report_paths.outputs.sonarqube_coverage_report_paths }}
+            -Dsonar.go.golangci-lint.reportPaths=${{ steps.sonarqube_report_paths.outputs.sonarqube_golangci_report_paths }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
