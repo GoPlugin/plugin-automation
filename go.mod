@@ -14,9 +14,10 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.17.0
 	github.com/shopspring/decimal v1.4.0
-	github.com/goplugin/plugin-common v0.0.1
-	github.com/goplugin/plugin-libocr v0.1.1//changes for plugin update
+	//github.com/goplugin/plugin-common v0.0.1
 	//github.com/goplugin/plugin-libocr v0.0.0-20241007185508-adbe57025f12
+	github.com/goplugin/plugin-common v0.0.1
+	github.com/goplugin/plugin-libocr v0.1.1
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/crypto v0.27.0
@@ -73,3 +74,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+retract [v1.0.0-0, v1.0.5] // reverting to v0
