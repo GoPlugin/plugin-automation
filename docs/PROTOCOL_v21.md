@@ -37,7 +37,7 @@ This document aims to give a high level overview of the protocol for Automation 
 
 ## Abstract
 
-plugin Automation is a decentralized execution engine for automating smart contracts,
+Plugin Automation is a decentralized execution engine for automating smart contracts,
 with a generic and extensible triggering mechanism.
 
 The protocol is implemented using the OCR3 interface, which is a decentralized consensus framework for off-chain computation.

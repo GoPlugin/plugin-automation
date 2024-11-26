@@ -2,10 +2,11 @@ package tickers
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
-	"github.com/goplugin/plugin-common/pkg/services"
+	"github.com/goplugin/plugin-automation/internal/util"
 )
 
 type observer[T any] interface {
@@ -15,13 +16,12 @@ type observer[T any] interface {
 type getterFunc[T any] func(context.Context, time.Time) (Tick[T], error)
 
 type timeTicker[T any] struct {
-	services.StateMachine
+	closer util.Closer
+
 	interval time.Duration
 	observer observer[T]
 	getterFn getterFunc[T]
 	logger   *log.Logger
-	done     chan struct{}
-	stopCh   services.StopChan
 }
 
 func NewTimeTicker[T any](interval time.Duration, observer observer[T], getterFn getterFunc[T], logger *log.Logger) *timeTicker[T] {
@@ -30,8 +30,6 @@ func NewTimeTicker[T any](interval time.Duration, observer observer[T], getterFn
 		observer: observer,
 		getterFn: getterFn,
 		logger:   logger,
-		done:     make(chan struct{}),
-		stopCh:   make(chan struct{}),
 	}
 
 	return t
@@ -40,13 +38,13 @@ func NewTimeTicker[T any](interval time.Duration, observer observer[T], getterFn
 // Start uses the provided context for each call to the getter function with the
 // configured interval as a timeout. This function blocks until Close is called
 // or the parent context is cancelled.
-func (t *timeTicker[T]) Start(ctx context.Context) error {
-	if err := t.StartOnce("timeTicker", func() error { return nil }); err != nil {
-		return err
-	}
-	defer close(t.done)
-	ctx, cancel := t.stopCh.Ctx(ctx)
+func (t *timeTicker[T]) Start(pctx context.Context) error {
+	ctx, cancel := context.WithCancel(pctx)
 	defer cancel()
+
+	if !t.closer.Store(cancel) {
+		return fmt.Errorf("already running")
+	}
 
 	t.logger.Printf("starting ticker service")
 	defer t.logger.Printf("ticker service stopped")
@@ -56,8 +54,6 @@ func (t *timeTicker[T]) Start(ctx context.Context) error {
 
 	for {
 		select {
-		case <-ctx.Done():
-			return nil
 		case tm := <-ticker.C:
 			if t.getterFn == nil {
 				continue
@@ -65,7 +61,6 @@ func (t *timeTicker[T]) Start(ctx context.Context) error {
 			tick, err := t.getterFn(ctx, tm)
 			if err != nil {
 				t.logger.Printf("error fetching tick: %s", err.Error())
-				continue
 			}
 			// observer.Process can be a heavy call taking upto ObservationProcessLimit seconds
 			// so it is run in a separate goroutine to not block further ticks
@@ -75,14 +70,13 @@ func (t *timeTicker[T]) Start(ctx context.Context) error {
 					l.Printf("error processing observer: %s", err.Error())
 				}
 			}(ctx, tick, t.observer, t.logger)
+		case <-ctx.Done():
+			return nil
 		}
 	}
 }
 
 func (t *timeTicker[T]) Close() error {
-	return t.StopOnce("timeTicker", func() error {
-		close(t.stopCh)
-		<-t.done
-		return nil
-	})
+	_ = t.closer.Close()
+	return nil
 }

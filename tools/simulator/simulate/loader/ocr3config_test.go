@@ -1,7 +1,6 @@
 package loader_test
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -60,7 +59,7 @@ type mockDigester struct {
 	mock.Mock
 }
 
-func (_m *mockDigester) ConfigDigest(ctx context.Context, config types.ContractConfig) (types.ConfigDigest, error) {
+func (_m *mockDigester) ConfigDigest(config types.ContractConfig) (types.ConfigDigest, error) {
 	req := _m.Called(config)
 
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%+v", config)))

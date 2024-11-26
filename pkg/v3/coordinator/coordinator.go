@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/goplugin/plugin-common/pkg/services"
 	common "github.com/goplugin/plugin-common/pkg/types/automation"
 
+	internalutil "github.com/goplugin/plugin-automation/internal/util"
 	"github.com/goplugin/plugin-automation/pkg/util"
 	"github.com/goplugin/plugin-automation/pkg/v3/config"
 	"github.com/goplugin/plugin-automation/pkg/v3/types"
@@ -21,9 +21,7 @@ const (
 )
 
 type coordinator struct {
-	services.StateMachine
-	stopCh services.StopChan
-	done   chan struct{}
+	closer internalutil.Closer
 	logger *log.Logger
 
 	eventsProvider   types.TransmitEventProvider
@@ -48,8 +46,6 @@ type record struct {
 func NewCoordinator(transmitEventProvider types.TransmitEventProvider, upkeepTypeGetter types.UpkeepTypeGetter, conf config.OffchainConfig, logger *log.Logger) *coordinator {
 	performLockoutWindow := time.Duration(conf.PerformLockoutWindow) * time.Millisecond
 	return &coordinator{
-		stopCh:               make(chan struct{}),
-		done:                 make(chan struct{}),
 		logger:               logger,
 		eventsProvider:       transmitEventProvider,
 		upkeepTypeGetter:     upkeepTypeGetter,
@@ -212,24 +208,16 @@ func (c *coordinator) checkEvents(ctx context.Context) error {
 	return nil
 }
 
-func (c *coordinator) run() {
-	defer close(c.done)
-
+func (c *coordinator) run(ctx context.Context) {
 	timer := time.NewTimer(cadence)
 	defer timer.Stop()
-
-	ctx, cancel := c.stopCh.NewCtx()
-	defer cancel()
 
 	for {
 		select {
 		case <-timer.C:
 			startTime := time.Now()
 
-			if err := c.checkEvents(ctx); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
+			if err := c.checkEvents(context.Background()); err != nil {
 				c.logger.Printf("failed to check for transmit events: %s", err)
 			}
 
@@ -251,29 +239,32 @@ func (c *coordinator) run() {
 }
 
 // Start starts all subprocesses
-func (c *coordinator) Start(_ context.Context) error {
-	if err := c.StateMachine.StartOnce("Coordinator", func() error { return nil }); err != nil {
-		return err
+func (c *coordinator) Start(pctx context.Context) error {
+	ctx, cancel := context.WithCancel(pctx)
+	defer cancel()
+
+	if !c.closer.Store(cancel) {
+		return fmt.Errorf("process already running")
 	}
 
 	go c.cache.Start(defaultCacheClean)
 	go c.visited.Start(defaultCacheClean)
 
-	c.run()
+	c.run(ctx)
+
 	return nil
 }
 
 // Close terminates all subprocesses
 func (c *coordinator) Close() error {
-	return c.StateMachine.StopOnce("Coordinator", func() error {
-		close(c.stopCh)
-		<-c.done
+	if !c.closer.Close() {
+		return fmt.Errorf("process not running")
+	}
 
-		c.cache.Stop()
-		c.visited.Stop()
+	c.cache.Stop()
+	c.visited.Stop()
 
-		return nil
-	})
+	return nil
 }
 
 func (c *coordinator) visitedID(e common.TransmitEvent) string {

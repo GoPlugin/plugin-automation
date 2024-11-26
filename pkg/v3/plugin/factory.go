@@ -1,20 +1,18 @@
 package plugin
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"math"
 	"math/cmplx"
 	"strconv"
 
-	"github.com/goplugin/plugin-libocr/offchainreporting2plus/ocr3types"
-
 	ocr2keepers "github.com/goplugin/plugin-automation/pkg/v3"
 	"github.com/goplugin/plugin-automation/pkg/v3/config"
 	"github.com/goplugin/plugin-automation/pkg/v3/runner"
 	"github.com/goplugin/plugin-automation/pkg/v3/types"
 	commontypes "github.com/goplugin/plugin-common/pkg/types/automation"
+	"github.com/goplugin/plugin-libocr/offchainreporting2plus/ocr3types"
 )
 
 type pluginFactory struct {
@@ -65,7 +63,7 @@ func NewReportingPluginFactory(
 	}
 }
 
-func (factory *pluginFactory) NewReportingPlugin(ctx context.Context, c ocr3types.ReportingPluginConfig) (ocr3types.ReportingPlugin[AutomationReportInfo], ocr3types.ReportingPluginInfo, error) {
+func (factory *pluginFactory) NewReportingPlugin(c ocr3types.ReportingPluginConfig) (ocr3types.ReportingPlugin[AutomationReportInfo], ocr3types.ReportingPluginInfo, error) {
 	info := ocr3types.ReportingPluginInfo{
 		Name: fmt.Sprintf("Oracle: %d: Automation Plugin Instance w/ Digest '%s'", c.OracleID, c.ConfigDigest),
 		Limits: ocr3types.ReportingPluginLimits{
@@ -115,7 +113,6 @@ func (factory *pluginFactory) NewReportingPlugin(ctx context.Context, c ocr3type
 		factory.runnable,
 		factory.runnerConf,
 		conf,
-		c.N,
 		c.F,
 		factory.logger,
 	)

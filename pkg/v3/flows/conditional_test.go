@@ -125,11 +125,11 @@ func TestSamplingProposal(t *testing.T) {
 
 	logger := log.New(io.Discard, "", log.LstdFlags)
 
-	runner := mocks.NewMockRunnable(t)
-	mStore := mocks.NewMockMetadataStore(t)
-	upkeepProvider := mocks.NewMockConditionalUpkeepProvider(t)
-	ratio := mocks.NewMockRatio(t)
-	coord := mocks.NewMockCoordinator(t)
+	runner := new(mocks.MockRunnable)
+	mStore := new(mocks.MockMetadataStore)
+	upkeepProvider := new(mocks.MockConditionalUpkeepProvider)
+	ratio := new(mocks.MockRatio)
+	coord := new(mocks.MockCoordinator)
 
 	ratio.On("OfInt", mock.Anything).Return(0, nil).Times(1)
 	ratio.On("OfInt", mock.Anything).Return(1, nil).Times(1)
@@ -193,11 +193,18 @@ func TestSamplingProposal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	go func(ctx context.Context) {
+	go func(svc service.Recoverable, ctx context.Context) {
 		defer wg.Done()
 		assert.NoError(t, svc.Start(ctx))
-	}(ctx)
-	t.Cleanup(func() { assert.NoError(t, svc.Close()) })
+	}(svc, ctx)
+
+	assert.NoError(t, svc.Close(), "no error expected on shut down")
 
 	wg.Wait()
+
+	mStore.AssertExpectations(t)
+	upkeepProvider.AssertExpectations(t)
+	coord.AssertExpectations(t)
+	runner.AssertExpectations(t)
+	// ratio.AssertExpectations(t)
 }
